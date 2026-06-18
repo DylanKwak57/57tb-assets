@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ตอบคำถามลูกค้า — 57 Total Beauty</title>
+<style>
+:root{--bg:#DFD9D1;--card:#fff;--text:#3A342E;--gold:#5C5248;--champ:#7A6F63;--gray:#8A7F74;--line:#cfc7bd}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,'Noto Sans Thai',Segoe UI,sans-serif;line-height:1.55}
+.wrap{max-width:680px;margin:0 auto;padding:20px 16px 56px}
+h1{font-size:20px;margin:6px 0 2px;color:var(--gold)}
+.sub{font-size:13px;color:var(--gray);margin-bottom:18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:0 0 14px}
+.q{font-size:15px;font-weight:600;margin:0 0 4px}
+.meta{font-size:12px;color:var(--gray);margin:0 0 10px}
+textarea{width:100%;min-height:84px;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:15px;font-family:inherit;color:var(--text);resize:vertical}
+textarea:focus{outline:none;border-color:var(--champ)}
+button{width:100%;background:var(--gold);color:#fff;border:0;border-radius:10px;padding:14px;font-size:16px;font-weight:600;margin-top:6px}
+button:disabled{opacity:.55}
+button:active{transform:scale(.99)}
+.box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:28px 16px;text-align:center;color:var(--champ)}
+.box .big{font-size:18px;color:var(--gold);font-weight:700;margin-bottom:6px}
+.foot{font-size:12px;color:var(--gray);text-align:center;margin-top:18px}
+</style>
+</head>
+<body>
+<div class="wrap" id="root">
+  <h1>ตอบคำถามลูกค้า (อารี)</h1>
+  <div class="box" id="status">กำลังโหลด...</div>
+</div>
+
+<script>
+const API = "https://pnjengzvzamkufiaexac.supabase.co/functions/v1/consult-answer";
+const key = new URLSearchParams(location.search).get("key") || "";
+const root = document.getElementById("root");
+const esc = (s) => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const fmt = (iso) => { try { return new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Bangkok",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false}).format(new Date(iso)); } catch(e){ return ""; } };
+
+function show(html){ root.innerHTML = '<h1>ตอบคำถามลูกค้า (อารี)</h1>' + html; }
+
+async function load(){
+  if(!key){ show('<div class="box">ลิงก์ไม่ถูกต้องค่ะ (ไม่มี key)</div>'); return; }
+  try{
+    const r = await fetch(API + "?key=" + encodeURIComponent(key));
+    const d = await r.json();
+    if(!r.ok || !d.ok){ show('<div class="box">ลิงก์ไม่ถูกต้องหรือหมดอายุค่ะ</div>'); return; }
+    const qs = d.questions || [];
+    if(!qs.length){ show('<div class="box">ตอนนี้ไม่มีคำถามที่ค้างอยู่ค่ะ ขอบคุณค่ะ</div>'); return; }
+    const cards = qs.map((q,i)=>`
+      <div class="card">
+        <p class="q">${i+1}. ${esc(q.question)}</p>
+        <p class="meta">ลูกค้าถามเมื่อ ${fmt(q.created_at)}</p>
+        <textarea data-id="${q.id}" placeholder="พิมพ์คำตอบเป็นภาษาไทยที่นี่ (เว้นว่างได้ถ้ายังไม่ตอบ)"></textarea>
+      </div>`).join("");
+    show(`<p class="sub">คำถามที่บอทยังตอบไม่ได้ ${qs.length} ข้อ — กรุณาตอบเป็นภาษาไทย ระบบจะเพิ่มเข้า FAQ ของบอทให้อัตโนมัติค่ะ</p>
+      ${cards}
+      <button id="save">บันทึกคำตอบ</button>
+      <p class="foot">57 Total Beauty · ระบบผู้ช่วยอัจฉริยะ</p>`);
+    document.getElementById("save").addEventListener("click", submit);
+  }catch(e){ show('<div class="box">เกิดข้อผิดพลาด กรุณาลองใหม่ค่ะ</div>'); }
+}
+
+async function submit(){
+  const btn = document.getElementById("save");
+  if(btn.disabled) return;
+  btn.disabled = true; btn.textContent = "กำลังบันทึก...";
+  const answers = [...document.querySelectorAll("textarea[data-id]")]
+    .map(t => ({ id: Number(t.dataset.id), answer: t.value.trim() }))
+    .filter(a => a.answer);
+  if(!answers.length){ btn.disabled=false; btn.textContent="บันทึกคำตอบ"; alert("ยังไม่ได้กรอกคำตอบค่ะ"); return; }
+  try{
+    const r = await fetch(API + "?key=" + encodeURIComponent(key), {
+      method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ answers })
+    });
+    const d = await r.json();
+    if(!r.ok || !d.ok){ btn.disabled=false; btn.textContent="บันทึกคำตอบ"; alert("เกิดข้อผิดพลาด กรุณาลองใหม่ค่ะ"); return; }
+    show(`<div class="box"><div class="big">บันทึกเรียบร้อยแล้ว ขอบคุณค่ะ</div><div>ตอบไปทั้งหมด ${d.applied} ข้อ ระบบเพิ่มเข้า FAQ ของบอทให้อัตโนมัติแล้วค่ะ</div></div>`);
+  }catch(e){ btn.disabled=false; btn.textContent="บันทึกคำตอบ"; alert("เกิดข้อผิดพลาด กรุณาลองใหม่ค่ะ"); }
+}
+
+load();
+</script>
+</body>
+</html>
