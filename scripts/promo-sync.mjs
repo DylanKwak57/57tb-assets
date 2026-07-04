@@ -117,17 +117,24 @@ async function fetchActivePromos() {
   for (const pg of data.results ?? []) {
     const props = pg.properties ?? {};
     const period = props["Period"]?.date;
+    let upcoming = false;
     if (period) {
       // date-only 정규화(slice(0,10)) — datetime이어도 당일 포함 (봇 raw 비교보다 상위집합 = 무해 방향)
-      if (period.start && today < String(period.start).slice(0, 10)) continue;
-      if (period.end && today > String(period.end).slice(0, 10)) continue;
+      if (period.end && today > String(period.end).slice(0, 10)) continue; // 종료분만 제외
+      // 🎯 시작 전(upcoming) 프로모도 "동기화 대상"에 포함 — 이미지 선행 준비 (2026-07-04 대표님 지적:
+      // 관행상 전달 27일 등록 → 봇 야간근무가 자정을 걸치므로(예 7/31 19:30~8/1 10:00) 매월 1일 00:00~04:00에
+      // "봇은 노출 시작했는데 이미지 미생성" 4시간 공백 발생. 미리 생성해두면 파일만 대기 — 노출은 봇 Period가 제어(무해).
+      if (period.start && today < String(period.start).slice(0, 10)) upcoming = true;
     }
     const name = (props["Name"]?.title ?? []).map((t) => t.plain_text).join("");
     const description = (props["Description"]?.rich_text ?? []).map((t) => t.plain_text).join("");
     const id8 = String(pg.id).replace(/-/g, "").slice(-8); // 봇과 동일 연산
-    out.push({ name, id8, description });
+    // Notion 첨부 원본 (signed URL, 1h 만료 — 즉시 다운로드 전제). upcoming이 홈페이지에 아직 없을 때 폴백.
+    const f = (props["Image"]?.files ?? [])[0];
+    const notionImageUrl = f?.file?.url ?? f?.external?.url ?? null;
+    out.push({ name, id8, description, upcoming, notionImageUrl });
   }
-  return out; // 전체 반환 (봇은 상위 4개 노출 — 초과분은 경고 대상이되 파일은 선행 생성)
+  return out; // live+upcoming 전부 동기화 대상 (봇 노출 판단은 upcoming 플래그로 구분)
 }
 
 // ── 이미지 유효성 ──
@@ -200,18 +207,19 @@ async function main() {
     alert("dirty:global", `⚠️ 57tb-assets promos/에 미커밋 변경이 있어 동기화 중단:\n${dirty.slice(0, 300)}`);
     throw new Error(`promos/ dirty — 중단:\n${dirty}`);
   }
-  git("pull", "--rebase");
+  git("-c", "rebase.autoStash=true", "pull", "--rebase"); // autostash: promos/ 밖(scripts/ 등) 작업중 변경에도 동기화 생존 (promos/ dirty는 별도 중단 가드)
 
-  // 1) Notion Active 프로모 (봇과 동일 규칙)
+  // 1) Notion Active 프로모 — live(기간중, 봇 노출) + upcoming(시작 전, 이미지 선행 준비)
   let promos = await fetchActivePromos();
-  if (process.env.PROMO_SYNC_TEST_FAKE === "1") promos = [...promos, { name: "__TEST404__", id8: "deadbee1", description: "x" }];
-  log(`Active 프로모 ${promos.length}건: ${promos.map((p) => `${p.name}(${p.id8})`).join(", ") || "(없음)"}`);
+  if (process.env.PROMO_SYNC_TEST_FAKE === "1") promos = [...promos, { name: "__TEST404__", id8: "deadbee1", description: "x", upcoming: false, notionImageUrl: null }];
+  const live = promos.filter((p) => !p.upcoming);
+  log(`동기화 대상 ${promos.length}건 (live ${live.length} + upcoming ${promos.length - live.length}): ${promos.map((p) => `${p.name}(${p.id8}${p.upcoming ? ",예정" : ""})`).join(", ") || "(없음)"}`);
 
-  // 2) 운영 경고: 봇 노출(상위4) 초과 / 노출분 Description 빈칸
-  if (promos.length > BOT_VISIBLE) {
-    alert("over4:global", `⚠️ Active 프로모 ${promos.length}개 — 봇은 Sort Order 상위 ${BOT_VISIBLE}개만 손님에게 노출합니다. Notion 정리 필요 여부 확인해 주세요.`);
+  // 2) 운영 경고 — 봇 노출 판단은 live 기준 (upcoming은 노출 전이라 경고 대상 아님)
+  if (live.length > BOT_VISIBLE) {
+    alert("over4:global", `⚠️ 기간 중 Active 프로모 ${live.length}개 — 봇은 Sort Order 상위 ${BOT_VISIBLE}개만 손님에게 노출합니다. Notion 정리 필요 여부 확인해 주세요.`);
   }
-  for (const p of promos.slice(0, BOT_VISIBLE)) {
+  for (const p of live.slice(0, BOT_VISIBLE)) {
     if (!p.description.trim()) {
       alert(`desc:${p.id8}`, `⚠️ 프로모 "${p.name}" Description 빈칸 — 아리가 이 프로모의 가격·조건을 몰라 상세 답변을 못 합니다(환각 위험↑). Notion Description 기입 필요.`);
     }
@@ -225,9 +233,18 @@ async function main() {
     const cFile = path.join(PROMOS, `c-${p.id8}.jpg`);
     let src;
     try {
-      const r = await fetch(`${ORIGIN}p-${p.id8}.jpg`, { cache: "no-store" });
+      let r = await fetch(`${ORIGIN}p-${p.id8}.jpg`, { cache: "no-store" });
+      // 홈페이지 미반영(404) → Notion 첨부 원본 폴백 (특히 upcoming: 홈페이지가 기간 전이라 아직 없을 수 있음)
+      if (r.status === 404 && p.notionImageUrl) {
+        log(`홈페이지 404 → Notion 첨부 폴백: ${p.name}(${p.id8})`);
+        r = await fetch(p.notionImageUrl, { cache: "no-store" });
+      }
       if (r.status === 404) {
-        alert(`404:${p.id8}`, `⚠️ 프로모 "${p.name}"(${p.id8}) 홈페이지 원본 미반영(404) — 홈페이지 반영 후 자동 재시도합니다. 그동안 봇에서 이 프로모 이미지가 안 보입니다.`);
+        if (p.upcoming) {
+          log(`skip(예정·원본 미준비): ${p.name}(${p.id8}) — 시작 전까지 자동 재시도`); // 노출 전이라 무알림
+        } else {
+          alert(`404:${p.id8}`, `⚠️ 프로모 "${p.name}"(${p.id8}) 원본 미반영(홈페이지 404·Notion 첨부 없음) — 자동 재시도합니다. 그동안 봇에서 이 프로모 이미지가 안 보입니다.`);
+        }
         continue;
       }
       if (!r.ok) throw new Error(`원본 다운로드 ${r.status}`);
@@ -272,7 +289,7 @@ async function main() {
     try { git("push", "origin", "master"); }
     catch {
       log("push 실패 — pull --rebase 후 1회 재시도");
-      git("pull", "--rebase");
+      git("-c", "rebase.autoStash=true", "pull", "--rebase"); // autostash: promos/ 밖(scripts/ 등) 작업중 변경에도 동기화 생존 (promos/ dirty는 별도 중단 가드)
       git("push", "origin", "master"); // 재실패 시 throw → 알림
     }
     log(`push 완료 (${ahead} commit)`);
