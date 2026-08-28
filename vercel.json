@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/img.ts": {
+      "includeFiles": "precision-campaign/**"
+    }
+  }
+}
