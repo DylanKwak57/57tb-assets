@@ -4,6 +4,9 @@
 // → 57tb-assets push → jsDelivr purge + CDN 바이트 해시 검증. 실패/경고 시에만 LINE 알림.
 // 실행: node --env-file=$HOME/.secrets/promo-sync.env scripts/promo-sync.mjs
 // 매일 04:00(방콕) launchd: com.57tb.promo-sync
+// 🚨 2026-11-16 Trigger.dev 로 옮김 — 지금 도는 곳 = N8NToTD `trigger/57tb/homepage/promo-image-sync.ts`(04:00 · 19:00 · 운영 스위치 PROMO_SYNC_TD_ENABLED).
+//    맥 launchd 는 내림(다시 켜지 말 것 — 둘이 같이 돌면 같은 그림을 두 번 올린다). 이 파일은 되돌리기용으로 남긴다.
+//    경위 = N8NToTD docs/mac-to-td-이전-결정-2026-11-16.md #7. 상태(알림 간격 · CDN 대기)는 이제 promos/sync-state.json.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
